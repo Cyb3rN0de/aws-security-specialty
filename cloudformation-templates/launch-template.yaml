@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Template to create an ec2 launch template with httpd ready
+
+Mappings: 
+  RegionMap: 
+    ap-southeast-1: 
+      "HVM64": "ami-07f179dc333499419"
+    ap-southeast-2: 
+      "HVM64": "ami-0c635ee4f691a2310"
+    ap-southeast-3: 
+      "HVM64": "ami-026f5d12b2bc13847"
+    us-east-1: 
+      "HVM64": "ami-0a8b4cd432b1c3063"
+    eu-west-2: 
+      "HVM64": "ami-055c6079e3f65e9ac"
+
+
+
+Parameters:
+  KeyName:
+    Description: Name of SSH KeyPair
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: singapore-access
+  SubnetId:
+    Description: Public subnet in which to launch an EC2
+    Type: String
+    Default: subnet-0b1d08a1949fa6350
+    AllowedValues:
+    - subnet-0b1d08a1949fa6350
+    - subnet-0125af41125a6520c
+    - subnet-01b5af8dc4cab8e7b
+  InstanceType:
+    Description: Choose instance type
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+    - t2.micro
+    - t3.micro
+  SpecificBucket:
+    Description: Versioned bucket with latest website content (bucket name only, no ARN)
+    Type: String
+    Default: icora.com.au
+
+
+
+Resources:
+  IcoraTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties: 
+      LaunchTemplateName: AWSL2-lt
+      LaunchTemplateData: 
+        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", HVM64]
+        InstanceType: !Ref InstanceType
+        Monitoring: 
+          Enabled: true
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !GetAtt InstanceSecurityGroup.GroupId
+        IamInstanceProfile: !Ref ServerInstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y #install all updates
+            yum install httpd -y #install Apache web server
+            systemctl start httpd #start the Apache web server
+            systemctl enable httpd #enable httpd auto-start after reboot
+            sudo aws s3 cp s3://${SpecificBucket}/ /var/www/html/ --recursive #copy website on server
+        TagSpecifications:
+        - ResourceType: instance
+          Tags: 
+            - Key: Name
+              Value: icora-web-server
+  EC2accessS3:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Tags:
+        - Key: Name
+          Value: EC2accessS3
+  ServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: icora-server-profile
+      Path: /
+      Roles:
+        - !Ref EC2accessS3
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: AWSL2-sg
+      GroupDescription: Public access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 14.203.133.18/32
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: AWSL2-sg

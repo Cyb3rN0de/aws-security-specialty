@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Template to create an ec2 instance with httpd ready and download web-server contents from a versioned s3 bucket of choice
+
+Mappings:
+  RegionMap:
+    ap-southeast-1:
+      "HVM64": "ami-07f179dc333499419"
+      "SecurityKey": "whereabout-singapore"
+    ap-southeast-2:
+      "HVM64": "ami-0c635ee4f691a2310"
+      "SecurityKey": "whereabout-sydney"
+    ap-southeast-3:
+      "HVM64": "ami-026f5d12b2bc13847"
+      "SecurityKey": "whereabout-jakarta"
+    us-east-1:
+      "HVM64": "ami-0a8b4cd432b1c3063"
+      "SecurityKey": "whereabout-north-virginia"
+    eu-west-2:
+      "HVM64": "ami-055c6079e3f65e9ac"
+      "SecurityKey": "whereabout-london"
+
+Parameters:
+  SubnetId:
+    Description: Public subnet in which to launch an EC2
+    Type: String
+    Default: subnet-baf023f2
+    AllowedValues:
+      - subnet-baf023f2
+      - subnet-60389e06
+      - subnet-880a5ad0
+  InstanceType:
+    Description: Choosing t3.micro as provisioned instance available
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+  SpecificBucket:
+    Description: Versioned bucket with latest website content
+    Type: String
+    Default: whereabout.place
+
+Resources:
+  WhereaboutEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", HVM64]
+      InstanceType: !Ref InstanceType
+      Monitoring: "true"
+      KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SecurityKey]
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !GetAtt InstanceSecurityGroup.GroupId
+      IamInstanceProfile: !Ref WhereaboutInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y #install all updates
+          yum install httpd -y #install Apache web server
+          systemctl start httpd #start the Apache web server
+          systemctl enable httpd #enable httpd auto-start after reboot
+          sudo aws s3 cp s3://${SpecificBucket}/ /var/www/html/ --recursive #copy website on server
+      Tags:
+        - Key: Name
+          Value: whereabout-server
+  VpcIPAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref WhereaboutEC2Instance
+      AllocationId: eipalloc-009a43610f4e45fbd
+  MyEC2toS3role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+  RolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: whereabouts3role
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: s3:*
+            Resource: "*"
+      Roles:
+        - !Ref MyEC2toS3role
+  WhereaboutInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref MyEC2toS3role
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Web-DMZ
+      GroupDescription: Public access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 58.175.76.101/32
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 14.203.133.18/32
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: whereabout-sg
+
+Outputs:
+  InstanceID:
+    Description: The Instance ID
+    Value: !Ref WhereaboutEC2Instance
+  PublicIp:
+    Description: Whereabout Server Public IP
+    Value: !GetAtt WhereaboutEC2Instance.PublicIp
+  Region:
+    Description: Region
+    Value: !Ref "AWS::Region"
